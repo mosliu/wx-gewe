@@ -23,7 +23,8 @@ class ConfigManager:
             "base_url": os.getenv("BASE_URL"),
             "app_id": os.getenv("APP_ID"),
             "token": os.getenv("GEWECHAT_TOKEN"),
-            "callback_url": os.getenv("CALLBACK_URL")
+            "callback_url": os.getenv("CALLBACK_URL"),
+            "auto_accept_friend": os.getenv("AUTO_ACCEPT_FRIEND", "true").lower() == "true"
         }
 
         # Push Server Configuration

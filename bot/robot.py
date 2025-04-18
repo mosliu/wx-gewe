@@ -57,6 +57,13 @@ class CallbackHandler:
 
                 robot = WeRobot.get_instance()
                 
+                # 检查是否自动接受好友请求
+                auto_accept = config.get("gewechat.auto_accept_friend", True)
+
+                if not auto_accept:
+                    logger.info(f"[gewechat] 自动接受好友请求已关闭，忽略来自 {from_nickname}({from_username}) 的请求")
+                    return "success"
+
                 if from_username and ticket and robot:
                     # 修正add_contacts调用参数
                     response = robot.client.add_contacts(
