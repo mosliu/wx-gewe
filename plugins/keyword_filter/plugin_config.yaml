@@ -1,0 +1,9 @@
+enabled: true
+priority: 30
+module_name: keyword_filter_plugin
+class_name: KeywordFilterPlugin
+config:
+  keywords:
+    - "你好"
+    - "帮助"
+  reply_template: "检测到关键词「{keyword}」"

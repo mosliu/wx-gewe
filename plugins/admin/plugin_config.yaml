@@ -1,0 +1,20 @@
+enabled: true
+priority: 5
+module_name: admin_plugin
+class_name: AdminPlugin
+config:
+  admin_users:
+    - "mosliu"  # 示例管理员ID，请替换为实际管理员ID
+  admin_commands:
+    add_bind:
+      command: "/add_bind"
+      description: "创建新的绑定密钥"
+      help_message: "格式: /add_bind <客户ID> <客户名称>"
+    model:
+      command: "/model"
+      description: "修改默认的OpenAI模型"
+      help_message: "格式: /model <模型名称>"
+    clear_cache:
+      command: "/clear_cache"
+      description: "清除Redis缓存"
+      help_message: "格式: /clear_cache"

@@ -1,0 +1,18 @@
+enabled: true
+priority: 50
+module_name: ai_plugin
+class_name: AIPlugin
+config:
+  models:
+    gpt-4o:
+      max_tokens: 8000
+    gpt-4o-mini:
+      max_tokens: 8000
+    deepseek-v3:
+      max_tokens: 8000
+    deepseek-r1:
+      max_tokens: 8000
+    grok-2:
+      max_tokens: 8000
+    gemini-2.0-flash:
+      max_tokens: 800000

@@ -1,0 +1,7 @@
+enabled: true
+priority: 10
+module_name: bind_plugin
+class_name: BindPlugin
+config:
+  bind_command: "/bind"
+  bind_help_message: "请输入正确的绑定格式：/bind <key>"

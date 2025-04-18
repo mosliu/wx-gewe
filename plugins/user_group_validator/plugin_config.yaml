@@ -1,0 +1,13 @@
+enabled: true
+priority: 20
+module_name: user_group_validator_plugin
+class_name: UserGroupValidatorPlugin
+config:
+  clear_cache_on_startup: false  # 启动时清除缓存
+  allow_unauthorized: false
+  unauthorized_message: "未授权的访问"
+  return_unauthorized_message: false
+  allowed_groups:
+    - "17223851114314@chatroom"  # 使用群ID
+    - "测试群聊1"                 # 使用群名
+  allowed_users: [ "wxid_7br2m2wm63th221" ]
