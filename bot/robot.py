@@ -44,25 +44,28 @@ class CallbackHandler:
                 root = ET.fromstring(content)
                 
                 # 获取必要信息
-                from_username = root.get('fromusername', '')  # 请求用户的wxid
-                encrypt_username = root.get('encryptusername', '')  # 加密的用户名
-                from_nickname = root.get('fromnickname', '')  # 请求用户的昵称
-                verify_content = root.get('content', '')  # 验证消息内容
-                ticket = root.get('ticket', '')  # 验证票据
-                scene = int(root.get('scene', '0'))  # 添加场景
-
+                from_username = root.get('fromusername', '')
+                encrypt_username = root.get('encryptusername', '')
+                from_nickname = root.get('fromnickname', '')
+                verify_content = root.get('content', '')
+                ticket = root.get('ticket', '')
+                scene = int(root.get('scene', '0'))
+                v3 = root.get('encryptusername', '')  # 通常是加密的用户名
+                v4 = root.get('ticket', '')  # 通常是ticket
+                
                 logger.info(f"[gewechat] 收到好友请求 - 来自: {from_nickname}({from_username}), 验证内容: {verify_content}, 场景: {scene}")
 
-                # 使用类方法获取实例
                 robot = WeRobot.get_instance()
                 
                 if from_username and ticket and robot:
-                    # 使用robot的client来调用add_contacts
+                    # 修正add_contacts调用参数
                     response = robot.client.add_contacts(
                         app_id=robot.app_id,
-                        user_id=encrypt_username,  # 使用加密的用户名
-                        ticket=ticket,
-                        scene=scene
+                        scene=scene,
+                        option=3,  # 通常用3表示来自好友请求
+                        v3=v3,
+                        v4=v4,
+                        content=verify_content
                     )
 
                     if response.get('ret') == 200:
