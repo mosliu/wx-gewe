@@ -36,44 +36,60 @@ class CallbackHandler:
         # 处理好友请求消息
         msg_type = data.get('Data', {}).get('MsgType')
         if msg_type == 37:  # 好友请求消息类型
-
             try:
-                # 获取请求相关信息
-                from_user = data.get('Data', {}).get('FromUserName')
-                ticket = data.get('Data', {}).get('Ticket')
                 content = data.get('Data', {}).get('Content', {}).get('string', '')
-                logger.info(f"[gewechat] 收到好友 {from_user} 请求消息, 内容: {content}")
+                
+                # 解析XML内容
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(content)
+                
+                # 获取必要信息
+                from_username = root.get('fromusername', '')  # 请求用户的wxid
+                encrypt_username = root.get('encryptusername', '')  # 加密的用户名
+                from_nickname = root.get('fromnickname', '')  # 请求用户的昵称
+                verify_content = root.get('content', '')  # 验证消息内容
+                ticket = root.get('ticket', '')  # 验证票据
+                scene = int(root.get('scene', '0'))  # 添加场景
 
-                if from_user and ticket and robot_instance:
-                    # 使用robot_instance的client来调用add_contacts
-                    response = robot_instance.client.add_contacts(
-                        app_id=robot_instance.app_id,
-                        user_id=from_user,
+                logger.info(f"[gewechat] 收到好友请求 - 来自: {from_nickname}({from_username}), 验证内容: {verify_content}, 场景: {scene}")
+
+                # 使用类方法获取实例
+                robot = WeRobot.get_instance()
+                
+                if from_username and ticket and robot:
+                    # 使用robot的client来调用add_contacts
+                    response = robot.client.add_contacts(
+                        app_id=robot.app_id,
+                        user_id=encrypt_username,  # 使用加密的用户名
                         ticket=ticket,
-                        scene=3  # 来自好友请求
+                        scene=scene
                     )
 
                     if response.get('ret') == 200:
-                        logger.info(f"[gewechat] Successfully accepted friend request from {from_user}")
+                        logger.info(f"[gewechat] 成功接受好友请求 - {from_nickname}({from_username})")
+                        
+                        # 等待一段时间确保好友关系建立
+                        time.sleep(1)
+                        
                         # 获取用户信息并记录
-                        brief_info = robot_instance.client.get_brief_info(robot_instance.app_id, [from_user])
+                        brief_info = robot.client.get_brief_info(robot.app_id, [from_username])
                         if brief_info.get('ret') == 200 and brief_info.get('data'):
-                            nickname = brief_info['data'][0].get('nickName', from_user)
-                            logger.info(f"[gewechat] New friend added: {nickname} ({from_user})")
+                            nickname = brief_info['data'][0].get('nickName', from_username)
+                            logger.info(f"[gewechat] 新好友信息 - 昵称: {nickname}, ID: {from_username}")
                             
-                            # 可选：发送欢迎消息
-                            welcome_msg = f"你好，我是AI助手。很高兴认识你！"
-                            robot_instance.client.post_text(
-                                robot_instance.app_id,
-                                from_user,
+                            # 发送欢迎消息
+                            welcome_msg = f"你好，{nickname}！我是AI助手，很高兴认识你！"
+                            robot.client.post_text(
+                                robot.app_id,
+                                from_username,
                                 welcome_msg
                             )
                     else:
-                        logger.error(f"[gewechat] Failed to accept friend request: {response}")
+                        logger.error(f"[gewechat] 接受好友请求失败: {response}")
 
                 return "success"
             except Exception as e:
-                logger.error(f"[gewechat] Error handling friend request: {e}")
+                logger.error_with_trace(f"[gewechat] 处理好友请求出错: {e}")
                 return "success"
 
         if msg_type == 51:
@@ -260,10 +276,10 @@ class CallbackHandler:
 
 class WeRobot:
     CREDENTIALS_FILE = "credentials.json"
-
+    
     def __init__(self):
-        global robot_instance
-        robot_instance = self
+        # 移除全局变量的设置，改用类变量
+        WeRobot._instance = self
 
         # 首先尝试从credentials.json加载配置
         credentials = self._load_credentials()
@@ -291,6 +307,13 @@ class WeRobot:
 
         # 检查缓存状态
         CacheManager.check_cache_status()
+
+    @classmethod
+    def get_instance(cls):
+        """获取WeRobot实例的类方法"""
+        if not hasattr(cls, '_instance'):
+            raise RuntimeError("WeRobot instance not initialized")
+        return cls._instance
 
     def _load_credentials(self):
         """从credentials.json加载配置"""
