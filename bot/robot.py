@@ -4,6 +4,7 @@ import json
 import web
 import asyncio
 import requests
+import base64
 from typing import List, Dict, Optional
 from urllib.parse import urlparse
 from dotenv import load_dotenv
@@ -17,7 +18,6 @@ from common.cache_manager import CacheManager
 from plugins.base import Plugin, Message
 
 # 全局变量存储robot实例和事件循环
-robot_instance = None
 _event_loop = None
 
 
@@ -25,6 +25,8 @@ class CallbackHandler:
     """回调处理类"""
 
     def POST(self):
+        robot_instance = WeRobot.get_instance()
+        
         web_data = web.data()
         logger.debug("[gewechat] receive data: %s", web_data)
         data = json.loads(web_data)
@@ -36,66 +38,15 @@ class CallbackHandler:
         # 处理好友请求消息
         msg_type = data.get('Data', {}).get('MsgType')
         if msg_type == 37:  # 好友请求消息类型
+            # 检查是否自动接受好友请求
+            auto_accept = config.get("gewechat.auto_accept_friend", True)
+
+            if not auto_accept:
+                logger.info(f"[gewechat] 自动接受好友请求已关闭，忽略请求")
+                return "success"
+
             try:
-                content = data.get('Data', {}).get('Content', {}).get('string', '')
-                
-                # 解析XML内容
-                import xml.etree.ElementTree as ET
-                root = ET.fromstring(content)
-                
-                # 获取必要信息
-                from_username = root.get('fromusername', '')
-                encrypt_username = root.get('encryptusername', '')
-                from_nickname = root.get('fromnickname', '')
-                verify_content = root.get('content', '')
-                ticket = root.get('ticket', '')
-                scene = int(root.get('scene', '0'))
-                v3 = root.get('encryptusername', '')  # 通常是加密的用户名
-                v4 = root.get('ticket', '')  # 通常是ticket
-                
-                logger.info(f"[gewechat] 收到好友请求 - 来自: {from_nickname}({from_username}), 验证内容: {verify_content}, 场景: {scene}")
-
-                robot = WeRobot.get_instance()
-                
-                # 检查是否自动接受好友请求
-                auto_accept = config.get("gewechat.auto_accept_friend", True)
-
-                if not auto_accept:
-                    logger.info(f"[gewechat] 自动接受好友请求已关闭，忽略来自 {from_nickname}({from_username}) 的请求")
-                    return "success"
-
-                if from_username and ticket and robot:
-                    # 修正add_contacts调用参数
-                    response = robot.client.add_contacts(
-                        app_id=robot.app_id,
-                        scene=scene,
-                        option=3,  # 通常用3表示来自好友请求
-                        v3=v3,
-                        v4=v4,
-                        content=verify_content
-                    )
-
-                    if response.get('ret') == 200:
-                        logger.info(f"[gewechat] 成功接受好友请求 - {from_nickname}({from_username})")
-                        
-                        # 等待一段时间确保好友关系建立
-                        time.sleep(1)
-                        
-                        # 获取用户信息并记录
-                        brief_info = robot.client.get_brief_info(robot.app_id, [from_username])
-                        if brief_info.get('ret') == 200 and brief_info.get('data'):
-                            nickname = brief_info['data'][0].get('nickName', from_username)
-                            logger.info(f"[gewechat] 新好友信息 - 昵称: {nickname}, ID: {from_username}")
-                            
-                            # 发送欢迎消息
-                            welcome_msg = f"你好，{nickname}！我是AI助手，很高兴认识你！"
-                            robot.client.post_text(
-                                robot.app_id,
-                                from_username,
-                                welcome_msg
-                            )
-                    else:
-                        logger.error(f"[gewechat] 接受好友请求失败: {response}")
+                self.parse_37_user_add_request(data)
 
                 return "success"
             except Exception as e:
@@ -151,47 +102,151 @@ class CallbackHandler:
             except Exception as e:
                 logger.error_with_trace(f"[gewechat] Error parsing type 49 message: {e}")
 
-        # 其他消息处理逻辑...
-        from_user = data.get('Data', {}).get('FromUserName', {}).get('string', '')
-        is_group = "@chatroom" in from_user
-        logger.debug(f"[gewechat] {'Group' if is_group else 'Private'} message from {from_user}: {content}")
+        # 处理消息类型
+        msg_type = data.get('Data', {}).get('MsgType')
+        content = data.get('Data', {}).get('Content', {}).get('string', '')
+        
+        # 处理图片消息
+        if msg_type == 3:  # 图片消息
+            try:
+                # 检查是否有图片数据
+                img_buf = data.get('Data', {}).get('ImgBuf', {})
+                if img_buf and 'buffer' in img_buf:
+                    # 如果有直接的图片数据
+                    tmp_dir = "tmp"
+                    os.makedirs(tmp_dir, exist_ok=True)
+                    
+                    # 生成文件路径
+                    msg_id = data.get('Data', {}).get('NewMsgId', '')
+                    file_path = os.path.join(tmp_dir, f"{msg_id}.png")
+                    
+                    # 保存图片数据
+                    img_data = base64.b64decode(img_buf['buffer'])
+                    with open(file_path, 'wb') as f:
+                        f.write(img_data)
+                    content = file_path
+                    logger.info(f"[gewechat] Image saved to {file_path}")
+                else:
+                    logger.debug("[gewechat] No direct image data, will need to download later")
+                    content = "[图片消息]"
+            except Exception as e:
+                logger.error_with_trace(f"[gewechat] Error processing image message: {e}")
+                content = "[图片消息处理失败]"
+        
+        # 处理语音消息
+        elif msg_type == 34:  # 语音消息
+            try:
+                voice_data = data.get('Data', {}).get('Voice', {})
+                voice_url = voice_data.get('CDNUrl', '')
+                if voice_url:
+                    # 下载语音文件到临时目录
+                    tmp_dir = "tmp"
+                    os.makedirs(tmp_dir, exist_ok=True)
+                    
+                    # 生成唯一文件名
+                    file_name = f"voice_{int(time.time())}_{hash(voice_url)}.mp3"
+                    file_path = os.path.join(tmp_dir, file_name)
+                    
+                    # 下载语音文件
+                    response = requests.get(voice_url, stream=True)
+                    if response.status_code == 200:
+                        with open(file_path, 'wb') as f:
+                            for chunk in response.iter_content(1024):
+                                f.write(chunk)
+                        content = file_path  # 更新content为文件路径
+                        logger.info(f"[gewechat] Voice saved to {file_path}")
+                    else:
+                        logger.error(f"[gewechat] Failed to download voice: {response.status_code}")
+                else:
+                    logger.error("[gewechat] No voice URL found in message")
+            except Exception as e:
+                logger.error_with_trace(f"[gewechat] Error processing voice message: {e}")
+        
+        # 处理文件消息
+        elif msg_type == 6:  # 文件消息
+            try:
+                file_data = data.get('Data', {}).get('File', {})
+                file_url = file_data.get('CDNUrl', '')
+                file_name = file_data.get('FileName', '')
+                
+                if file_url and file_name:
+                    # 下载文件到临时目录
+                    tmp_dir = "tmp"
+                    os.makedirs(tmp_dir, exist_ok=True)
+                    
+                    # 生成唯一文件名，保留原始扩展名
+                    ext = os.path.splitext(file_name)[1]
+                    safe_file_name = f"file_{int(time.time())}_{hash(file_url)}{ext}"
+                    file_path = os.path.join(tmp_dir, safe_file_name)
+                    
+                    # 下载文件
+                    response = requests.get(file_url, stream=True)
+                    if response.status_code == 200:
+                        with open(file_path, 'wb') as f:
+                            for chunk in response.iter_content(1024):
+                                f.write(chunk)
+                        content = file_path  # 更新content为文件路径
+                        logger.info(f"[gewechat] File saved to {file_path}")
+                    else:
+                        logger.error(f"[gewechat] Failed to download file: {response.status_code}")
+                else:
+                    logger.error("[gewechat] No file URL or name found in message")
+            except Exception as e:
+                logger.error_with_trace(f"[gewechat] Error processing file message: {e}")
 
         # 构造消息对象
         message = Message(
-            # type=str(data.get('Data', {}).get('MsgType')),
-            # content=data.get('Data', {}).get('Content', {}).get('string', ''),
             type=str(msg_type),
-            content=content,  # 使用处理后的content
+            content=content,
             sender_id=data.get('Data', {}).get('FromUserName', {}).get('string'),
             room_id=data.get('Data', {}).get('FromUserName', {}).get('string'),
             raw_data=data,
             create_time=data.get('Data', {}).get('CreateTime', int(time.time())),
             msg_id=str(data.get('Data', {}).get('NewMsgId', '')),
-            app_id=robot_instance.app_id if robot_instance else None
+            app_id=robot_instance.app_id if robot_instance else None,
+            extra_data={
+                'files': []  # 初始化文件列表
+            }
         )
+
+        # 如果是媒体文件，添加到extra_data
+        if msg_type in (3, 34, 6):  # 图片、语音、文件
+            if os.path.exists(content):
+                message.extra_data['files'].append({
+                    'type': 'image' if msg_type == 3 else 'voice' if msg_type == 34 else 'file',
+                    'path': content
+                })
 
         # 获取并设置发送者昵称
         sender_id = message.sender_id
         try:
-            # 使用_robot_instance的client来获取用户信息
-            brief_info_response = robot_instance.client.get_brief_info(robot_instance.app_id, [sender_id])
-            if brief_info_response.get('ret') == 200 and brief_info_response.get('data'):
-                brief_info = brief_info_response['data'][0]
-                message.set_sender_info(brief_info.get('nickName', sender_id))
+            if robot_instance and robot_instance.client:
+                brief_info_response = robot_instance.client.get_brief_info(robot_instance.app_id, [sender_id])
+                if brief_info_response and brief_info_response.get('ret') == 200 and brief_info_response.get('data'):
+                    brief_info = brief_info_response['data'][0]
+                    message.set_sender_info(brief_info.get('nickName', sender_id))
 
-                # 如果是群聊消息，获取实际发送者信息
-                if message.is_group:
-                    content_str = data.get('Data', {}).get('Content', {}).get('string', '')
-                    actual_user_id = content_str.split(':', 1)[0]
-                    chatroom_member_list_response = robot_instance.client.get_chatroom_member_list(robot_instance.app_id, sender_id)
-                    if chatroom_member_list_response.get('ret') == 200 and chatroom_member_list_response.get('data', {}).get('memberList'):
-                        for member_info in chatroom_member_list_response['data']['memberList']:
-                            if member_info['wxid'] == actual_user_id:
-                                actual_nickname = member_info.get('displayName') or member_info.get('nickName', actual_user_id)
-                                message.set_sender_info(actual_nickname)
-                                break
+                    # 如果是群聊消息，获取实际发送者信息
+                    if message.is_group:
+                        content_str = data.get('Data', {}).get('Content', {}).get('string', '')
+                        if ':' in content_str:
+                            actual_user_id = content_str.split(':', 1)[0]
+                            chatroom_member_list_response = robot_instance.client.get_chatroom_member_list(robot_instance.app_id, sender_id)
+                            if chatroom_member_list_response and chatroom_member_list_response.get('ret') == 200:
+                                member_list = chatroom_member_list_response.get('data', {}).get('memberList', [])
+                                for member_info in member_list:
+                                    if member_info['wxid'] == actual_user_id:
+                                        actual_nickname = member_info.get('displayName') or member_info.get('nickName', actual_user_id)
+                                        message.set_sender_info(actual_nickname)
+                                        break
+                else:
+                    logger.warning(f"[gewechat] Failed to get brief info for {sender_id}")
+                    message.set_sender_info(sender_id)
+            else:
+                logger.warning("[gewechat] Robot instance or client not available")
+                message.set_sender_info(sender_id)
         except Exception as e:
-            logger.warning(f"Failed to get sender nickname for {sender_id}: {e}")
+            logger.warning(f"[gewechat] Failed to get sender nickname for {sender_id}: {e}")
             message.set_sender_info(sender_id)  # 使用sender_id作为默认昵称
 
         # 忽略状态同步消息
@@ -243,6 +298,56 @@ class CallbackHandler:
                 loop.close()
 
         return "success"
+
+    def parse_37_user_add_request(self, data):
+        content = data.get('Data', {}).get('Content', {}).get('string', '')
+        # 解析XML内容
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(content)
+        # 获取必要信息
+        from_username = root.get('fromusername', '')
+        encrypt_username = root.get('encryptusername', '')
+        from_nickname = root.get('fromnickname', '')
+        verify_content = root.get('content', '')
+        ticket = root.get('ticket', '')
+        scene = int(root.get('scene', '0'))
+        v3 = root.get('encryptusername', '')  # 通常是加密的用户名
+        v4 = root.get('ticket', '')  # 通常是ticket
+        logger.info(
+            f"[gewechat] 收到好友请求 - 来自: {from_nickname}({from_username}), 验证内容: {verify_content}, 场景: {scene}")
+        robot = WeRobot.get_instance()
+        if from_username and ticket and robot:
+            # 修正add_contacts调用参数
+            response = robot.client.add_contacts(
+                app_id=robot.app_id,
+                scene=scene,
+                option=3,  # 通常用3表示来自好友请求
+                v3=v3,
+                v4=v4,
+                content=verify_content
+            )
+
+            if response.get('ret') == 200:
+                logger.info(f"[gewechat] 成功接受好友请求 - {from_nickname}({from_username})")
+
+                # 等待一段时间确保好友关系建立
+                time.sleep(1)
+
+                # 获取用户信息并记录
+                brief_info = robot.client.get_brief_info(robot.app_id, [from_username])
+                if brief_info.get('ret') == 200 and brief_info.get('data'):
+                    nickname = brief_info['data'][0].get('nickName', from_username)
+                    logger.info(f"[gewechat] 新好友信息 - 昵称: {nickname}, ID: {from_username}")
+
+                    # 发送欢迎消息
+                    welcome_msg = f"你好，{nickname}！我是AI助手，很高兴认识你！"
+                    robot.client.post_text(
+                        robot.app_id,
+                        from_username,
+                        welcome_msg
+                    )
+            else:
+                logger.error(f"[gewechat] 接受好友请求失败: {response}")
 
     def GET(self):
         """处理文件下载请求"""
@@ -867,3 +972,29 @@ class WeRobot:
         except Exception as e:
             logger.error(f"[gewechat] Error during startup: {e}")
             raise
+
+    async def download_image(self, msg_id: str, retry_count=3):
+        """下载图片"""
+        if not self.client or not self.app_id:
+            logger.error("[gewechat] Client or app_id not available")
+            return None
+
+        for i in range(retry_count):
+            try:
+                response = self.client.get_msg_image(self.app_id, msg_id)
+                if response and response.get('ret') == 200:
+                    img_data = response.get('data', {}).get('image')
+                    if img_data:
+                        # 保存图片
+                        tmp_dir = "tmp"
+                        os.makedirs(tmp_dir, exist_ok=True)
+                        file_path = os.path.join(tmp_dir, f"{msg_id}.png")
+
+                        with open(file_path, 'wb') as f:
+                            f.write(base64.b64decode(img_data))
+                        return file_path
+                logger.warning(f"[gewechat] Failed to download image, attempt {i+1}/{retry_count}")
+            except Exception as e:
+                logger.error(f"[gewechat] Error downloading image: {e}")
+            await asyncio.sleep(1)
+        return None
