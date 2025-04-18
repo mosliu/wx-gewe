@@ -36,11 +36,13 @@ class CallbackHandler:
         # 处理好友请求消息
         msg_type = data.get('Data', {}).get('MsgType')
         if msg_type == 37:  # 好友请求消息类型
+
             try:
                 # 获取请求相关信息
                 from_user = data.get('Data', {}).get('FromUserName')
                 ticket = data.get('Data', {}).get('Ticket')
                 content = data.get('Data', {}).get('Content', {}).get('string', '')
+                logger.info(f"[gewechat] 收到好友 {from_user} 请求消息, 内容: {content}")
 
                 if from_user and ticket and robot_instance:
                     # 使用robot_instance的client来调用add_contacts
